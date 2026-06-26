@@ -6,6 +6,7 @@ import re
 import httpx
 
 from src.config import Settings
+from src.llm.models import anthropic_model_candidates, openrouter_model_candidates
 from src.services.prompt_settings import build_guidance_prompt
 
 BASE_SYSTEM_PROMPT = """You are a local news video producer and investigative journalist.
@@ -50,6 +51,13 @@ def _extract_json(text: str) -> dict:
     return json.loads(text)
 
 
+def _format_http_error(provider: str, exc: httpx.HTTPStatusError) -> str:
+    detail = exc.response.text.strip().replace("\n", " ")
+    if len(detail) > 240:
+        detail = detail[:240] + "…"
+    return f"{provider}: HTTP {exc.response.status_code}" + (f" ({detail})" if detail else "")
+
+
 def analyze_transcripts(
     settings: Settings,
     transcripts: list[dict],
@@ -75,7 +83,7 @@ def analyze_transcripts(
             if provider == "openai":
                 return _call_openai(settings, user_content, system_prompt)
         except httpx.HTTPStatusError as exc:
-            errors.append(f"{provider}: HTTP {exc.response.status_code}")
+            errors.append(_format_http_error(provider, exc))
         except Exception as exc:
             errors.append(f"{provider}: {exc}")
 
@@ -83,53 +91,74 @@ def analyze_transcripts(
 
 
 def _call_anthropic(settings: Settings, user_content: str, system_prompt: str) -> dict:
-    model = settings.claude_model.removeprefix("anthropic/")
-    response = httpx.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "x-api-key": settings.anthropic_api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        json={
-            "model": model,
-            "max_tokens": 4096,
-            "system": system_prompt,
-            "messages": [{"role": "user", "content": user_content}],
-        },
-        timeout=120.0,
-    )
-    response.raise_for_status()
-    content = response.json()["content"][0]["text"]
-    return _extract_json(content)
+    last_error: httpx.HTTPStatusError | None = None
+    for model in anthropic_model_candidates(settings.claude_model):
+        response = httpx.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": settings.anthropic_api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": model,
+                "max_tokens": 4096,
+                "system": system_prompt,
+                "messages": [{"role": "user", "content": user_content}],
+            },
+            timeout=120.0,
+        )
+        if response.status_code == 404:
+            last_error = httpx.HTTPStatusError(
+                f"Model not found: {model}",
+                request=response.request,
+                response=response,
+            )
+            continue
+        response.raise_for_status()
+        content = response.json()["content"][0]["text"]
+        return _extract_json(content)
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No Anthropic models available to try")
 
 
 def _call_openrouter(settings: Settings, user_content: str, system_prompt: str) -> dict:
-    model = settings.claude_model
-    if not model.startswith("anthropic/"):
-        model = f"anthropic/{model}"
+    last_error: httpx.HTTPStatusError | None = None
+    for model in openrouter_model_candidates(settings.claude_model):
+        response = httpx.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.openrouter_api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/TheMitchyBoy/Claude-LLM-Local-News-Analysis-",
+                "X-Title": "Meeting Video Ideas Pipeline",
+            },
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                "max_tokens": 4096,
+            },
+            timeout=120.0,
+        )
+        if response.status_code in {404, 402}:
+            last_error = httpx.HTTPStatusError(
+                f"Model unavailable: {model}",
+                request=response.request,
+                response=response,
+            )
+            continue
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+        return _extract_json(content)
 
-    response = httpx.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {settings.openrouter_api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/TheMitchyBoy/Claude-LLM-Local-News-Analysis-",
-            "X-Title": "Meeting Video Ideas Pipeline",
-        },
-        json={
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            "max_tokens": 4096,
-        },
-        timeout=120.0,
-    )
-    response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
-    return _extract_json(content)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No OpenRouter models available to try")
 
 
 def _call_openai(settings: Settings, user_content: str, system_prompt: str) -> dict:

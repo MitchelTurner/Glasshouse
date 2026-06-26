@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openrouter_api_key: str = ""
     openai_api_key: str = ""
-    claude_model: str = "anthropic/claude-sonnet-4.5"
+    claude_model: str = "claude-sonnet-4-5"
     openai_fallback_model: str = "gpt-4o-mini"
 
     telegram_bot_token: str = ""
