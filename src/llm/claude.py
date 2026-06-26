@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import json
-import re
-
 import httpx
 
 from src.config import Settings
+from src.llm.json_parse import LLMJSONError, parse_llm_json
 from src.llm.models import anthropic_model_candidates, openrouter_model_candidates
 from src.services.prompt_settings import build_guidance_prompt
 
@@ -33,22 +31,21 @@ Return ONLY valid JSON (no markdown fences) with this structure:
   ]
 }
 
-Produce 3-5 ideas per meeting when material supports it. Avoid duplicate angles."""
+Rules:
+- Produce 2-3 ideas per meeting (max 3).
+- Keep every string under 180 characters.
+- Escape double quotes inside strings.
+- Do not include trailing commas.
+- Return complete, valid JSON only."""
 
-SYSTEM_PROMPT = BASE_SYSTEM_PROMPT
+COMPACT_RETRY_PROMPT = """Your previous answer was incomplete or invalid JSON.
+Return ONLY compact valid JSON with at most 2 ideas per meeting.
+Keep every string under 120 characters. No markdown. No commentary."""
 
 
 def get_system_prompt(guidance: dict | None = None) -> str:
     extra = build_guidance_prompt(guidance)
     return f"{BASE_SYSTEM_PROMPT}\n\nProducer preferences:\n{extra}"
-
-
-def _extract_json(text: str) -> dict:
-    text = text.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    return json.loads(text)
 
 
 def _format_http_error(provider: str, exc: httpx.HTTPStatusError) -> str:
@@ -58,22 +55,33 @@ def _format_http_error(provider: str, exc: httpx.HTTPStatusError) -> str:
     return f"{provider}: HTTP {exc.response.status_code}" + (f" ({detail})" if detail else "")
 
 
+def _truncate_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n\n[... transcript truncated ...]"
+
+
+def _build_user_content(transcripts: list[dict], max_chars: int) -> str:
+    content = "Analyze these meeting transcripts and suggest video topics:\n\n"
+    for item in transcripts:
+        content += f"---\nMEETING: {item['title']}\n"
+        if item.get("meeting_type"):
+            content += f"TYPE: {item['meeting_type']}\n"
+        if item.get("published_at"):
+            content += f"DATE: {item['published_at']}\n"
+        content += f"TRANSCRIPT:\n{_truncate_text(item['text'], max_chars)}\n\n"
+    return content
+
+
 def analyze_transcripts(
     settings: Settings,
     transcripts: list[dict],
     guidance: dict | None = None,
 ) -> dict:
-    user_content = "Analyze these meeting transcripts and suggest video topics:\n\n"
-    for item in transcripts:
-        user_content += f"---\nMEETING: {item['title']}\n"
-        if item.get("meeting_type"):
-            user_content += f"TYPE: {item['meeting_type']}\n"
-        if item.get("published_at"):
-            user_content += f"DATE: {item['published_at']}\n"
-        user_content += f"TRANSCRIPT:\n{item['text']}\n\n"
-
+    user_content = _build_user_content(transcripts, settings.max_transcript_chars)
     system_prompt = get_system_prompt(guidance)
     errors: list[str] = []
+
     for provider in settings.llm_providers:
         try:
             if provider == "anthropic":
@@ -84,14 +92,36 @@ def analyze_transcripts(
                 return _call_openai(settings, user_content, system_prompt)
         except httpx.HTTPStatusError as exc:
             errors.append(_format_http_error(provider, exc))
+        except (LLMJSONError, RuntimeError) as exc:
+            errors.append(f"{provider}: {exc}")
         except Exception as exc:
             errors.append(f"{provider}: {exc}")
 
     raise RuntimeError("All LLM providers failed: " + "; ".join(errors))
 
 
+def _parse_llm_content(content: str, *, provider: str, stop_reason: str | None = None) -> dict:
+    try:
+        return parse_llm_json(content)
+    except LLMJSONError as exc:
+        if stop_reason == "max_tokens":
+            raise LLMJSONError(f"{provider}: response truncated at max_tokens") from exc
+        raise LLMJSONError(f"{provider}: {exc}") from exc
+
+
+def _retry_messages(user_content: str, broken_response: str) -> list[dict]:
+    return [
+        {"role": "user", "content": user_content},
+        {
+            "role": "assistant",
+            "content": broken_response[:4000],
+        },
+        {"role": "user", "content": COMPACT_RETRY_PROMPT},
+    ]
+
+
 def _call_anthropic(settings: Settings, user_content: str, system_prompt: str) -> dict:
-    last_error: httpx.HTTPStatusError | None = None
+    last_error: Exception | None = None
     for model in anthropic_model_candidates(settings.claude_model):
         response = httpx.post(
             "https://api.anthropic.com/v1/messages",
@@ -102,11 +132,11 @@ def _call_anthropic(settings: Settings, user_content: str, system_prompt: str) -
             },
             json={
                 "model": model,
-                "max_tokens": 4096,
+                "max_tokens": settings.llm_max_tokens,
                 "system": system_prompt,
                 "messages": [{"role": "user", "content": user_content}],
             },
-            timeout=120.0,
+            timeout=180.0,
         )
         if response.status_code == 404:
             last_error = httpx.HTTPStatusError(
@@ -116,8 +146,36 @@ def _call_anthropic(settings: Settings, user_content: str, system_prompt: str) -
             )
             continue
         response.raise_for_status()
-        content = response.json()["content"][0]["text"]
-        return _extract_json(content)
+        payload = response.json()
+        content = payload["content"][0]["text"]
+        stop_reason = payload.get("stop_reason")
+
+        try:
+            return _parse_llm_content(content, provider="anthropic", stop_reason=stop_reason)
+        except LLMJSONError:
+            retry = httpx.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": settings.anthropic_api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "max_tokens": settings.llm_max_tokens,
+                    "system": system_prompt,
+                    "messages": _retry_messages(user_content, content),
+                },
+                timeout=180.0,
+            )
+            retry.raise_for_status()
+            retry_payload = retry.json()
+            retry_content = retry_payload["content"][0]["text"]
+            return _parse_llm_content(
+                retry_content,
+                provider="anthropic",
+                stop_reason=retry_payload.get("stop_reason"),
+            )
 
     if last_error is not None:
         raise last_error
@@ -126,6 +184,11 @@ def _call_anthropic(settings: Settings, user_content: str, system_prompt: str) -
 
 def _call_openrouter(settings: Settings, user_content: str, system_prompt: str) -> dict:
     last_error: httpx.HTTPStatusError | None = None
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
     for model in openrouter_model_candidates(settings.claude_model):
         response = httpx.post(
             "https://openrouter.ai/api/v1/chat/completions",
@@ -137,13 +200,10 @@ def _call_openrouter(settings: Settings, user_content: str, system_prompt: str) 
             },
             json={
                 "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
-                "max_tokens": 4096,
+                "messages": messages,
+                "max_tokens": settings.llm_max_tokens,
             },
-            timeout=120.0,
+            timeout=180.0,
         )
         if response.status_code in {404, 402}:
             last_error = httpx.HTTPStatusError(
@@ -153,8 +213,33 @@ def _call_openrouter(settings: Settings, user_content: str, system_prompt: str) 
             )
             continue
         response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
-        return _extract_json(content)
+        payload = response.json()
+        content = payload["choices"][0]["message"]["content"]
+        finish_reason = payload["choices"][0].get("finish_reason")
+
+        try:
+            return _parse_llm_content(content, provider="openrouter", stop_reason=finish_reason)
+        except LLMJSONError:
+            retry_messages = messages + [
+                {"role": "assistant", "content": content[:4000]},
+                {"role": "user", "content": COMPACT_RETRY_PROMPT},
+            ]
+            retry = httpx.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.openrouter_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": retry_messages,
+                    "max_tokens": settings.llm_max_tokens,
+                },
+                timeout=180.0,
+            )
+            retry.raise_for_status()
+            retry_content = retry.json()["choices"][0]["message"]["content"]
+            return parse_llm_json(retry_content)
 
     if last_error is not None:
         raise last_error
@@ -162,6 +247,10 @@ def _call_openrouter(settings: Settings, user_content: str, system_prompt: str) 
 
 
 def _call_openai(settings: Settings, user_content: str, system_prompt: str) -> dict:
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
     response = httpx.post(
         "https://api.openai.com/v1/chat/completions",
         headers={
@@ -170,14 +259,12 @@ def _call_openai(settings: Settings, user_content: str, system_prompt: str) -> d
         },
         json={
             "model": settings.openai_fallback_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            "max_tokens": 4096,
+            "messages": messages,
+            "max_tokens": settings.llm_max_tokens,
+            "response_format": {"type": "json_object"},
         },
-        timeout=120.0,
+        timeout=180.0,
     )
     response.raise_for_status()
     content = response.json()["choices"][0]["message"]["content"]
-    return _extract_json(content)
+    return parse_llm_json(content)

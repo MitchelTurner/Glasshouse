@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     lookback_days: int = 14
     max_transcripts: int = 10
     max_research_queries: int = 3
+    max_transcript_chars: int = 6000
+    llm_max_tokens: int = 8192
     dry_run: bool = False
 
     @property
