@@ -41,7 +41,7 @@ cp .env.example .env
 | `ANTHROPIC_API_KEY` | One of | Direct Claude API key (preferred) |
 | `OPENROUTER_API_KEY` | One of | Claude via OpenRouter |
 | `OPENAI_API_KEY` | One of | Fallback if Claude providers unavailable |
-| `CLAUDE_MODEL` | No | Default: `anthropic/claude-sonnet-4.5` |
+| `CLAUDE_MODEL` | No | Default: `claude-sonnet-4-5` (OpenRouter: `anthropic/claude-sonnet-4.5`) |
 | `TELEGRAM_BOT_TOKEN` | For notifications | From [@BotFather](https://t.me/BotFather) |
 | `TELEGRAM_CHAT_ID` | For notifications | Your chat or group ID |
 | `LOOKBACK_DAYS` | No | How far back to fetch meetings (default 14) |
