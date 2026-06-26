@@ -9,6 +9,7 @@ import httpx
 
 from src.config import Settings, get_settings
 from src.notifications.telegram import send_telegram_message
+from src.services.meeting_agent import answer_question, clear_conversation
 from src.services.pipeline import run_pipeline_for_latest_meeting
 
 logger = logging.getLogger(__name__)
@@ -22,12 +23,17 @@ GENERATE_PATTERN = re.compile(
 
 HELP_TEXT = (
     "<b>Meeting Video Ideas Bot</b>\n\n"
-    "Commands:\n"
+    "<b>Commands</b>\n"
     "/latest — analyze the latest meeting and send video ideas\n"
     "/ideas — same as /latest\n"
+    "/reset — clear conversation memory\n"
     "/status — check bot status\n"
     "/help — show this message\n\n"
-    "You can also write: <i>generate ideas for the latest meeting</i>"
+    "<b>Ask me anything</b>\n"
+    "I use the latest meeting transcripts as context. Examples:\n"
+    "• What was the most controversial vote?\n"
+    "• Summarize the school board budget discussion\n"
+    "• Give me 3 video angles on the housing item"
 )
 
 _bot_thread: threading.Thread | None = None
@@ -57,6 +63,20 @@ def _get_updates(bot_token: str, offset: int | None = None) -> list[dict]:
     return payload.get("result", [])
 
 
+def _send_agent_reply(settings: Settings, chat_id: str, text: str) -> None:
+    try:
+        send_telegram_message(settings.telegram_bot_token, chat_id, text)
+    except httpx.HTTPStatusError:
+        # Fallback to plain text if HTML parsing fails
+        plain = re.sub(r"<[^>]+>", "", text)
+        send_telegram_message(
+            settings.telegram_bot_token,
+            chat_id,
+            plain,
+            parse_mode=None,
+        )
+
+
 def _handle_message(settings: Settings, message: dict) -> None:
     chat = message.get("chat", {})
     chat_id = chat.get("id")
@@ -65,44 +85,65 @@ def _handle_message(settings: Settings, message: dict) -> None:
     if not text or chat_id is None:
         return
 
+    chat_id_str = str(chat_id)
     if not _authorized_chat(settings, chat_id):
         logger.info("Ignored Telegram message from unauthorized chat %s", chat_id)
         return
 
     lowered = text.lower()
     if lowered.startswith("/help") or lowered == "/start":
-        send_telegram_message(settings.telegram_bot_token, str(chat_id), HELP_TEXT)
+        send_telegram_message(settings.telegram_bot_token, chat_id_str, HELP_TEXT)
+        return
+
+    if lowered.startswith("/reset"):
+        clear_conversation(chat_id_str)
+        send_telegram_message(
+            settings.telegram_bot_token,
+            chat_id_str,
+            "<b>Conversation cleared.</b> Ask me a new question anytime.",
+        )
         return
 
     if lowered.startswith("/status"):
         send_telegram_message(
             settings.telegram_bot_token,
-            str(chat_id),
-            "<b>Bot is running.</b>\nSend /latest to analyze the newest meeting transcript.",
+            chat_id_str,
+            "<b>Bot is running.</b>\nAsk a question about the latest meeting, or send /latest for full video ideas.",
         )
         return
 
     if lowered.startswith("/latest") or lowered.startswith("/ideas") or GENERATE_PATTERN.search(text):
         send_telegram_message(
             settings.telegram_bot_token,
-            str(chat_id),
+            chat_id_str,
             "<i>Analyzing the latest meeting transcript…</i>",
         )
         try:
             result = run_pipeline_for_latest_meeting(settings, send_telegram=False)
             send_telegram_message(
                 settings.telegram_bot_token,
-                str(chat_id),
+                chat_id_str,
                 result.telegram_preview,
             )
         except Exception as exc:
             logger.exception("Telegram on-demand analysis failed")
             send_telegram_message(
                 settings.telegram_bot_token,
-                str(chat_id),
+                chat_id_str,
                 f"<b>Analysis failed:</b> {_escape(str(exc))}",
             )
         return
+
+    try:
+        reply = answer_question(text, chat_id_str, settings)
+        _send_agent_reply(settings, chat_id_str, reply)
+    except Exception as exc:
+        logger.exception("Telegram agent reply failed")
+        send_telegram_message(
+            settings.telegram_bot_token,
+            chat_id_str,
+            f"<b>Sorry, I could not answer that:</b> {_escape(str(exc))}",
+        )
 
 
 def _escape(value: str) -> str:

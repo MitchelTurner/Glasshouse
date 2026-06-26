@@ -4,19 +4,48 @@ import httpx
 
 
 def send_telegram_message(bot_token: str, chat_id: str, text: str, parse_mode: str = "HTML") -> bool:
+    for chunk in _split_message(text):
+        _send_single_message(bot_token, chat_id, chunk, parse_mode)
+    return True
+
+
+def _send_single_message(
+    bot_token: str,
+    chat_id: str,
+    text: str,
+    parse_mode: str | None = "HTML",
+) -> bool:
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    response = httpx.post(
-        url,
-        json={
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": parse_mode,
-            "disable_web_page_preview": True,
-        },
-        timeout=30.0,
-    )
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "disable_web_page_preview": True,
+    }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    response = httpx.post(url, json=payload, timeout=30.0)
     response.raise_for_status()
     return response.json().get("ok", False)
+
+
+def _split_message(text: str, limit: int = 4000) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    remaining = text
+    while remaining:
+        if len(remaining) <= limit:
+            chunks.append(remaining)
+            break
+        split_at = remaining.rfind("\n\n", 0, limit)
+        if split_at < limit // 2:
+            split_at = remaining.rfind("\n", 0, limit)
+        if split_at < limit // 2:
+            split_at = limit
+        chunks.append(remaining[:split_at].rstrip())
+        remaining = remaining[split_at:].lstrip()
+    return chunks
 
 
 def get_telegram_bot_info(bot_token: str) -> dict:

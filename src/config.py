@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     daily_scan_timezone: str = "UTC"
     telegram_polling_enabled: bool = True
 
+    agent_max_history: int = 8
+    agent_context_chars: int = 8000
+    agent_analysis_chars: int = 4000
+    agent_recent_meetings: int = 5
+
     @property
     def llm_providers(self) -> list[str]:
         providers: list[str] = []

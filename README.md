@@ -131,9 +131,16 @@ curl -X POST http://localhost:8080/api/scan/daily
 
 Message your bot (from the configured `TELEGRAM_CHAT_ID`):
 
-- `/latest` or `/ideas` — analyze the **latest meeting** and send video ideas
-- `/help` — show available commands
-- Natural language works too: *"generate ideas for the latest meeting"*
+- `/latest` or `/ideas` — full video ideas analysis for the latest meeting
+- `/reset` — clear conversation memory
+- `/help` — show commands
+
+**Ask questions naturally** — the bot acts as an AI agent using latest meeting transcripts:
+
+- *What was the most controversial vote in the latest meeting?*
+- *Summarize the school board budget discussion*
+- *Give me 3 video angles on the downtown development item*
+- *Who spoke against the bond measure?*
 
 Processed meetings are tracked in `processed_transcripts` so daily scans only notify you about **new** meetings.
 
