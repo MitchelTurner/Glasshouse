@@ -101,12 +101,48 @@ VALUES (
 );
 ```
 
-## Scheduling
+## Daily automation
 
-Run on a cron schedule after new meetings are transcribed:
+When the dashboard is running (`python run_dashboard.py` or Railway deploy), it automatically:
+
+1. **Scans daily** for new meeting transcripts not yet analyzed
+2. **Runs analysis + Telegram notification** when new meetings are found
+3. **Listens on Telegram** for on-demand requests about the latest meeting
+
+Configure in `.env`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DAILY_SCAN_ENABLED` | `true` | Enable daily scan scheduler |
+| `DAILY_SCAN_HOUR` | `8` | Hour to run scan (24h) |
+| `DAILY_SCAN_MINUTE` | `0` | Minute to run scan |
+| `DAILY_SCAN_TIMEZONE` | `UTC` | Timezone for schedule |
+| `TELEGRAM_POLLING_ENABLED` | `true` | Listen for Telegram commands |
+
+Manual scan:
+
+```bash
+python run_daily_scan.py
+# or
+curl -X POST http://localhost:8080/api/scan/daily
+```
+
+### Telegram commands
+
+Message your bot (from the configured `TELEGRAM_CHAT_ID`):
+
+- `/latest` or `/ideas` — analyze the **latest meeting** and send video ideas
+- `/help` — show available commands
+- Natural language works too: *"generate ideas for the latest meeting"*
+
+Processed meetings are tracked in `processed_transcripts` so daily scans only notify you about **new** meetings.
+
+## Scheduling (optional external cron)
+
+If you prefer an external cron instead of the built-in scheduler, disable `DAILY_SCAN_ENABLED` and run:
 
 ```cron
-0 8 * * 1 cd /path/to/repo && /path/to/venv/bin/python run_pipeline.py
+0 8 * * * cd /path/to/repo && /path/to/venv/bin/python run_daily_scan.py
 ```
 
 ## Output

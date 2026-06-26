@@ -9,7 +9,8 @@ from src.db.schema import load_schema
 from src.db.transcripts import fetch_recent_meeting_transcripts, get_connection
 from src.llm.claude import get_system_prompt
 from src.notifications.telegram import get_telegram_bot_info, test_telegram_connection
-from src.services.pipeline import load_latest_analysis, run_pipeline
+from src.services.daily_scan import run_daily_scan
+from src.services.pipeline import load_latest_analysis, run_pipeline, run_pipeline_for_latest_meeting
 from src.services.prompt_settings import load_guidance, save_guidance
 
 router = APIRouter()
@@ -93,6 +94,11 @@ def get_status():
             "available": latest is not None,
             "idea_count": len(latest.get("ideas", [])) if latest else 0,
             "summary": latest.get("summary") if latest else None,
+        },
+        "automation": {
+            "daily_scan_enabled": settings.daily_scan_enabled,
+            "daily_scan_time": f"{settings.daily_scan_hour:02d}:{settings.daily_scan_minute:02d} {settings.daily_scan_timezone}",
+            "telegram_polling_enabled": settings.telegram_polling_enabled,
         },
     }
 
@@ -198,6 +204,38 @@ def analyze(payload: AnalyzeRequest):
         "idea_count": result.idea_count,
         "telegram_sent": result.telegram_sent,
         "run_id": result.run_id,
+        "analysis": result.analysis,
+        "telegram_preview": result.telegram_preview,
+    }
+
+
+@router.post("/scan/daily")
+def trigger_daily_scan():
+    return run_daily_scan()
+
+
+@router.post("/analyze/latest")
+def analyze_latest(payload: AnalyzeRequest | None = None):
+    settings = get_settings()
+    body = payload or AnalyzeRequest()
+    if body.guidance:
+        save_guidance(body.guidance.model_dump())
+
+    try:
+        result = run_pipeline_for_latest_meeting(
+            settings,
+            send_telegram=body.send_telegram,
+            mark_processed=False,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return {
+        "transcript_count": result.transcript_count,
+        "idea_count": result.idea_count,
+        "telegram_sent": result.telegram_sent,
         "analysis": result.analysis,
         "telegram_preview": result.telegram_preview,
     }

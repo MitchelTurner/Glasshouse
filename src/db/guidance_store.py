@@ -6,7 +6,7 @@ from datetime import datetime
 import psycopg2.extras
 
 from src.config import Settings, get_settings
-from src.db.transcripts import get_connection
+from src.db.connection import get_connection
 
 GUIDANCE_KEY = "producer_guidance"
 

@@ -7,6 +7,8 @@ import psycopg2
 import psycopg2.extras
 
 from src.config import Settings
+from src.db.connection import get_connection
+from src.db.processed import get_processed_transcript_ids
 from src.db.schema import build_transcript_query, load_schema
 
 
@@ -19,10 +21,6 @@ class MeetingTranscript:
     published_at: datetime | None
     full_text: str
     word_count: int
-
-
-def get_connection(settings: Settings):
-    return psycopg2.connect(settings.database_url)
 
 
 def fetch_recent_meeting_transcripts(settings: Settings) -> list[MeetingTranscript]:
@@ -50,6 +48,20 @@ def fetch_recent_meeting_transcripts(settings: Settings) -> list[MeetingTranscri
         )
         for row in rows
     ]
+
+
+def fetch_unprocessed_meeting_transcripts(settings: Settings) -> list[MeetingTranscript]:
+    processed_ids = get_processed_transcript_ids(settings)
+    return [
+        transcript
+        for transcript in fetch_recent_meeting_transcripts(settings)
+        if transcript.transcript_id not in processed_ids
+    ]
+
+
+def fetch_latest_meeting_transcript(settings: Settings) -> MeetingTranscript | None:
+    transcripts = fetch_recent_meeting_transcripts(settings)
+    return transcripts[0] if transcripts else None
 
 
 def save_analysis_run(

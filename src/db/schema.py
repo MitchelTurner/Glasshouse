@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import psycopg2
-
 from src.config import Settings
+from src.db.connection import get_connection
 
 
 @dataclass
@@ -216,7 +215,3 @@ def _build_transcript_query_sql(schema: DatabaseSchema) -> str:
         ORDER BY {published_expr} DESC NULLS LAST, t.{order_col} DESC
         LIMIT %s
     """
-
-
-def get_connection(settings: Settings):
-    return psycopg2.connect(settings.database_url)

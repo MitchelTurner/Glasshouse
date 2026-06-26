@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 8192
     dry_run: bool = False
 
+    daily_scan_enabled: bool = True
+    daily_scan_hour: int = 8
+    daily_scan_minute: int = 0
+    daily_scan_timezone: str = "UTC"
+    telegram_polling_enabled: bool = True
+
     @property
     def llm_providers(self) -> list[str]:
         providers: list[str] = []
