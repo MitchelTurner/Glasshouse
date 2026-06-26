@@ -58,7 +58,21 @@ def _text_expr(table_alias: str, column: str | None, fallback: str) -> str:
     return fallback
 
 
-def build_transcript_query(schema: DatabaseSchema) -> str:
+def build_transcript_query(
+    schema: DatabaseSchema,
+    lookback_days: int,
+    max_transcripts: int,
+) -> tuple[str, tuple]:
+    query = _build_transcript_query_sql(schema)
+    uses_lookback = "%s || ' days'" in query
+    params: list[int] = []
+    if uses_lookback:
+        params.append(lookback_days)
+    params.append(max_transcripts)
+    return query, tuple(params)
+
+
+def _build_transcript_query_sql(schema: DatabaseSchema) -> str:
     t = schema.transcripts
     if t is None:
         raise RuntimeError("No transcripts table found in database")
@@ -95,8 +109,8 @@ def build_transcript_query(schema: DatabaseSchema) -> str:
         elif t.has("title", "video_title"):
             title_name = t.pick("title", "video_title")
             meeting_filter = (
-                f"(t.{title_name} ILIKE '%meeting%' OR t.{title_name} ILIKE '%council%' "
-                f"OR t.{title_name} ILIKE '%board%' OR t.{title_name} ILIKE '%commission%')"
+                f"(t.{title_name} ILIKE '%%meeting%%' OR t.{title_name} ILIKE '%%council%%' "
+                f"OR t.{title_name} ILIKE '%%board%%' OR t.{title_name} ILIKE '%%commission%%')"
             )
 
         where_parts = []
@@ -176,8 +190,8 @@ def build_transcript_query(schema: DatabaseSchema) -> str:
         where_parts.append("t.meeting_type IS NOT NULL")
     elif v.has("title"):
         where_parts.append(
-            "(v.title ILIKE '%meeting%' OR v.title ILIKE '%council%' "
-            "OR v.title ILIKE '%board%' OR v.title ILIKE '%commission%')"
+            "(v.title ILIKE '%%meeting%%' OR v.title ILIKE '%%council%%' "
+            "OR v.title ILIKE '%%board%%' OR v.title ILIKE '%%commission%%')"
         )
 
     if v.has("published_at") or t.has("published_at", "uploaded_at"):

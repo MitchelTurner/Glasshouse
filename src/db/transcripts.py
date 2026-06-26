@@ -27,25 +27,10 @@ def get_connection(settings: Settings):
 
 def fetch_recent_meeting_transcripts(settings: Settings) -> list[MeetingTranscript]:
     schema = load_schema(settings)
-    query = build_transcript_query(schema)
-
-    t = schema.transcripts
-    v = schema.videos
-    
-    # Determine if query has a date filter based on exact logic in build_transcript_query
-    has_date_filter = False
-    if v is None:
-        # No videos table: check transcripts for date columns
-        has_date_filter = t is not None and t.has("published_at", "uploaded_at", "created_at")
-    else:
-        # Videos table exists: check both tables
-        has_date_filter = (v.has("published_at") or (t is not None and t.has("published_at", "uploaded_at")))
-    
-    # Build params tuple based on whether date filter exists
-    params = (
-        (settings.lookback_days, settings.max_transcripts)
-        if has_date_filter
-        else (settings.max_transcripts,)
+    query, params = build_transcript_query(
+        schema,
+        settings.lookback_days,
+        settings.max_transcripts,
     )
 
     with get_connection(settings) as conn:
