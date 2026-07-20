@@ -40,7 +40,7 @@ PostgreSQL transcripts
 
 **`src/db/processed.py`** — Tracks which transcript IDs have been analyzed so the daily scan only processes **new** meetings.
 
-**`src/db/covered_stories.py`** — Persists each generated news/video idea (title, angle, research, etc.) into `covered_stories`. Used to tell the LLM what was already covered and to let other software query shared Postgres / `/api/stories`.
+**`src/db/covered_stories.py`** — Persists each generated news/video idea (title, angle, research, etc.) into `covered_stories`. Used to tell the LLM what was already covered and to let other software query shared Postgres / `/api/stories`. Can backfill from historical `analysis_runs` via `backfill_covered_stories_from_analysis_runs()` / `POST /api/stories/backfill` / `run_backfill_stories.py`.
 
 **`src/services/pipeline.py`** — Main orchestrator:
 - `run_pipeline_for_transcripts()` — analyze a specific list of meetings

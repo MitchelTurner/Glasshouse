@@ -17,6 +17,7 @@ from pathlib import Path
 
 from src.config import Settings, get_settings
 from src.db.covered_stories import (
+    ensure_covered_stories_backfilled,
     get_recent_covered_titles,
     load_latest_analysis_from_db,
     save_covered_stories,
@@ -77,6 +78,7 @@ def run_pipeline_for_transcripts(
     settings = settings or get_settings()
     guidance = guidance or load_guidance()
     payload = _transcripts_to_payload(transcripts)
+    ensure_covered_stories_backfilled(settings)
     already_covered = get_recent_covered_titles(settings)
 
     analysis = analyze_transcripts(

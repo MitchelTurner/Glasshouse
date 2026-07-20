@@ -72,6 +72,8 @@ def save_covered_stories(
     transcript_ids: list[int],
     *,
     analysis_run_id: int | None = None,
+    covered_at: datetime | None = None,
+    update_existing: bool = True,
     settings: Settings | None = None,
 ) -> list[int]:
     """Insert or update covered story rows. Returns saved row IDs."""
@@ -82,6 +84,30 @@ def save_covered_stories(
     _ensure_table(settings)
     saved_ids: list[int] = []
 
+    if update_existing:
+        conflict_sql = """
+            ON CONFLICT (content_hash) DO UPDATE SET
+                analysis_run_id = COALESCE(EXCLUDED.analysis_run_id, covered_stories.analysis_run_id),
+                transcript_ids = EXCLUDED.transcript_ids,
+                title = EXCLUDED.title,
+                meeting_source = EXCLUDED.meeting_source,
+                hook = EXCLUDED.hook,
+                angle = EXCLUDED.angle,
+                key_points = EXCLUDED.key_points,
+                research_queries = EXCLUDED.research_queries,
+                background_research = EXCLUDED.background_research,
+                urgency = EXCLUDED.urgency,
+                estimated_length = EXCLUDED.estimated_length,
+                idea_json = EXCLUDED.idea_json,
+                covered_at = EXCLUDED.covered_at
+            RETURNING id
+        """
+    else:
+        conflict_sql = """
+            ON CONFLICT (content_hash) DO NOTHING
+            RETURNING id
+        """
+
     with get_connection(settings) as conn:
         with conn.cursor() as cur:
             for idea in ideas:
@@ -91,7 +117,7 @@ def save_covered_stories(
 
                 content_hash = story_content_hash(idea)
                 cur.execute(
-                    """
+                    f"""
                     INSERT INTO covered_stories (
                         analysis_run_id,
                         transcript_ids,
@@ -110,23 +136,9 @@ def save_covered_stories(
                         covered_at
                     )
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'covered', %s, NOW()
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'covered', %s, COALESCE(%s, NOW())
                     )
-                    ON CONFLICT (content_hash) DO UPDATE SET
-                        analysis_run_id = COALESCE(EXCLUDED.analysis_run_id, covered_stories.analysis_run_id),
-                        transcript_ids = EXCLUDED.transcript_ids,
-                        title = EXCLUDED.title,
-                        meeting_source = EXCLUDED.meeting_source,
-                        hook = EXCLUDED.hook,
-                        angle = EXCLUDED.angle,
-                        key_points = EXCLUDED.key_points,
-                        research_queries = EXCLUDED.research_queries,
-                        background_research = EXCLUDED.background_research,
-                        urgency = EXCLUDED.urgency,
-                        estimated_length = EXCLUDED.estimated_length,
-                        idea_json = EXCLUDED.idea_json,
-                        covered_at = NOW()
-                    RETURNING id
+                    {conflict_sql}
                     """,
                     (
                         analysis_run_id,
@@ -142,6 +154,7 @@ def save_covered_stories(
                         idea.get("estimated_length"),
                         content_hash,
                         psycopg2.extras.Json(idea),
+                        covered_at,
                     ),
                 )
                 row = cur.fetchone()
@@ -152,6 +165,89 @@ def save_covered_stories(
     return saved_ids
 
 
+def _extract_ideas(payload: Any) -> list[dict]:
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return []
+    if isinstance(payload, dict):
+        ideas = payload.get("ideas", [])
+        return [idea for idea in ideas if isinstance(idea, dict)]
+    if isinstance(payload, list):
+        return [idea for idea in payload if isinstance(idea, dict)]
+    return []
+
+
+def backfill_covered_stories_from_analysis_runs(
+    settings: Settings | None = None,
+) -> dict[str, int]:
+    """Populate covered_stories from historical analysis_runs rows.
+
+    Existing stories (same content hash) are left unchanged. Returns counts for
+    runs scanned, ideas found, and rows newly inserted.
+    """
+    settings = settings or get_settings()
+    _ensure_table(settings)
+
+    with get_connection(settings) as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, transcripts, ideas_json, run_at
+                FROM analysis_runs
+                ORDER BY run_at ASC, id ASC
+                """
+            )
+            rows = cur.fetchall()
+
+    runs_scanned = 0
+    ideas_found = 0
+    inserted_ids: list[int] = []
+
+    for row in rows:
+        runs_scanned += 1
+        ideas = _extract_ideas(row.get("ideas_json"))
+        ideas_found += len(ideas)
+        transcript_ids = [int(value) for value in (row.get("transcripts") or [])]
+        inserted_ids.extend(
+            save_covered_stories(
+                ideas,
+                transcript_ids,
+                analysis_run_id=row.get("id"),
+                covered_at=row.get("run_at"),
+                update_existing=False,
+                settings=settings,
+            )
+        )
+
+    return {
+        "runs_scanned": runs_scanned,
+        "ideas_found": ideas_found,
+        "stories_inserted": len(inserted_ids),
+    }
+
+
+def ensure_covered_stories_backfilled(settings: Settings | None = None) -> dict[str, int] | None:
+    """If covered_stories is empty but analysis_runs has data, backfill once."""
+    settings = settings or get_settings()
+    try:
+        _ensure_table(settings)
+        with get_connection(settings) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM covered_stories")
+                story_count = int(cur.fetchone()[0])
+                if story_count > 0:
+                    return None
+                cur.execute("SELECT COUNT(*) FROM analysis_runs")
+                run_count = int(cur.fetchone()[0])
+        if run_count == 0:
+            return None
+        return backfill_covered_stories_from_analysis_runs(settings)
+    except Exception:
+        return None
+
+
 def list_covered_stories(
     settings: Settings | None = None,
     *,
@@ -160,7 +256,7 @@ def list_covered_stories(
 ) -> list[dict]:
     settings = settings or get_settings()
     try:
-        _ensure_table(settings)
+        ensure_covered_stories_backfilled(settings)
     except Exception:
         return []
 

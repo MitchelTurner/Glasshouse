@@ -228,6 +228,7 @@ curl -X POST http://localhost:8080/api/scan/daily
 | `/api/scan/daily` | POST | Trigger daily new-meeting scan |
 | `/api/ideas/latest` | GET | Return last analysis JSON (file, then Postgres fallback) |
 | `/api/stories` | GET | List covered news/video ideas saved in Postgres |
+| `/api/stories/backfill` | POST | Import historical ideas from `analysis_runs` into `covered_stories` |
 
 ---
 
@@ -270,6 +271,18 @@ psql $DATABASE_URL -f db/migrations/004_covered_stories.sql
 ```
 
 (The app also creates `covered_stories` automatically on first save.)
+
+### Backfill existing analysis history
+
+If you already have rows in `analysis_runs` from earlier pipeline runs, import them into `covered_stories`:
+
+```bash
+python run_backfill_stories.py
+# or
+curl -X POST http://localhost:8080/api/stories/backfill
+```
+
+When `covered_stories` is empty, Glasshouse also auto-backfills from `analysis_runs` the first time stories are listed or a new analysis runs.
 
 ### Add a meeting manually
 

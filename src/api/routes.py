@@ -12,7 +12,10 @@ from pydantic import BaseModel, Field
 
 from src.api.security import check_rate_limit, safe_error_detail, safe_status_error
 from src.config import Settings, get_settings
-from src.db.covered_stories import list_covered_stories
+from src.db.covered_stories import (
+    backfill_covered_stories_from_analysis_runs,
+    list_covered_stories,
+)
 from src.db.schema import load_schema
 from src.db.transcripts import fetch_recent_meeting_transcripts, get_connection
 from src.llm.claude import get_system_prompt
@@ -321,3 +324,22 @@ def covered_stories(limit: int = 50, status: str | None = None):
             detail=f"Failed to load covered stories: {safe_error_detail(exc, settings)}",
         ) from exc
     return {"count": len(stories), "stories": stories}
+
+
+@router.post("/stories/backfill")
+def backfill_covered_stories(request: Request):
+    """Import historical ideas from analysis_runs into covered_stories."""
+    settings = get_settings()
+    check_rate_limit(
+        request,
+        scope="analyze",
+        limit=settings.rate_limit_analyze_per_minute,
+    )
+    try:
+        result = backfill_covered_stories_from_analysis_runs(settings)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to backfill covered stories: {safe_error_detail(exc, settings)}",
+        ) from exc
+    return {"ok": True, **result}
