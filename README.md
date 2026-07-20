@@ -39,6 +39,7 @@ flowchart TB
         TG[Telegram bot & notifications]
         Web[Web dashboard]
         JSON[latest_ideas.json]
+        Stories[(covered_stories<br/>Postgres)]
     end
 
     subgraph automation [Automation]
@@ -51,6 +52,8 @@ flowchart TB
     Research --> TG
     Research --> JSON
     Research --> Web
+    Research --> Stories
+    Stories -. dedup context .-> Claude
     Scheduler --> Fetch
     BotPoll --> Agent
     Agent --> Claude
@@ -223,13 +226,16 @@ curl -X POST http://localhost:8080/api/scan/daily
 | `/api/analyze` | POST | Run analysis from the dashboard |
 | `/api/analyze/latest` | POST | Analyze only the latest meeting |
 | `/api/scan/daily` | POST | Trigger daily new-meeting scan |
-| `/api/ideas/latest` | GET | Return last analysis JSON |
+| `/api/ideas/latest` | GET | Return last analysis JSON (file, then Postgres fallback) |
+| `/api/stories` | GET | List covered news/video ideas saved in Postgres |
 
 ---
 
 ## Database
 
 Glasshouse adapts to different Postgres schemas automatically. It expects a `transcripts` table and optionally a `videos` table.
+
+After each analysis run, story ideas are written back to Postgres in `covered_stories` (and the full run in `analysis_runs`). That lets Glasshouse avoid re-covering the same topics and lets other software reuse the same data via SQL or `GET /api/stories`.
 
 ### Core tables
 
@@ -239,7 +245,31 @@ Glasshouse adapts to different Postgres schemas automatically. It expects a `tra
 | `videos` | Video metadata (`is_meeting = TRUE` for meetings) |
 | `analysis_runs` | History of each analysis execution |
 | `processed_transcripts` | Tracks which meetings were already analyzed (daily scan) |
+| `covered_stories` | Individual news/video ideas + research Glasshouse has covered |
 | `app_settings` | Saved producer guidance (survives redeploys) |
+
+### Covered stories for other software
+
+```sql
+SELECT id, title, hook, angle, urgency, background_research, covered_at
+FROM covered_stories
+ORDER BY covered_at DESC
+LIMIT 50;
+```
+
+Or via API:
+
+```bash
+curl http://localhost:8080/api/stories?limit=50
+```
+
+Apply the migration on existing databases:
+
+```bash
+psql $DATABASE_URL -f db/migrations/004_covered_stories.sql
+```
+
+(The app also creates `covered_stories` automatically on first save.)
 
 ### Add a meeting manually
 

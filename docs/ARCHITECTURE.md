@@ -19,12 +19,14 @@ This document explains what each part of Glasshouse does and how data flows thro
 ```
 PostgreSQL transcripts
     ↓  src/db/transcripts.py      — fetch meetings (schema-adaptive SQL)
+    ↓  src/db/covered_stories.py  — load recently covered titles (dedup context)
     ↓  src/services/pipeline.py   — orchestrate the run
     ↓  src/llm/claude.py          — send transcripts to Claude, get JSON ideas
     ↓  src/research/web_search.py — DuckDuckGo enrichment per idea
     ↓  src/notifications/telegram.py — format and send HTML message
     ↓  output/latest_ideas.json   — saved artifact
     ↓  analysis_runs table        — run history in Postgres
+    ↓  covered_stories table      — per-story persistence for reuse / dedup
 ```
 
 ### Key files
@@ -37,6 +39,8 @@ PostgreSQL transcripts
 - `fetch_latest_meeting_transcript()` — most recent meeting only
 
 **`src/db/processed.py`** — Tracks which transcript IDs have been analyzed so the daily scan only processes **new** meetings.
+
+**`src/db/covered_stories.py`** — Persists each generated news/video idea (title, angle, research, etc.) into `covered_stories`. Used to tell the LLM what was already covered and to let other software query shared Postgres / `/api/stories`.
 
 **`src/services/pipeline.py`** — Main orchestrator:
 - `run_pipeline_for_transcripts()` — analyze a specific list of meetings
@@ -115,8 +119,9 @@ Provider priority for LLM calls: Anthropic → OpenRouter → OpenAI (first avai
 |-------|-----------|---------|
 | `transcripts` | Your ingestion pipeline | `transcripts.py` |
 | `videos` | Your ingestion pipeline | `schema.py` (joins) |
-| `analysis_runs` | `pipeline.py` | `processed.py` (backfill) |
+| `analysis_runs` | `pipeline.py` | `processed.py` (backfill), `covered_stories.py` / `load_latest_analysis` |
 | `processed_transcripts` | `pipeline.py`, `processed.py` | `daily_scan.py` |
+| `covered_stories` | `pipeline.py` via `covered_stories.py` | LLM dedup, `/api/stories`, other apps sharing DB |
 | `app_settings` | `guidance_store.py` | `prompt_settings.py` |
 
 ---

@@ -2,7 +2,7 @@
 
 Orchestrates the full flow from fetching meeting transcripts through
 LLM analysis, web research enrichment, Telegram delivery, and recording
-the run in Postgres.
+the run plus individual covered stories in Postgres.
 
 Entry points:
   run_pipeline()                  — analyze all recent meetings (CLI)
@@ -16,6 +16,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from src.config import Settings, get_settings
+from src.db.covered_stories import (
+    get_recent_covered_titles,
+    load_latest_analysis_from_db,
+    save_covered_stories,
+)
 from src.db.processed import mark_transcripts_processed
 from src.db.transcripts import (
     MeetingTranscript,
@@ -72,8 +77,14 @@ def run_pipeline_for_transcripts(
     settings = settings or get_settings()
     guidance = guidance or load_guidance()
     payload = _transcripts_to_payload(transcripts)
+    already_covered = get_recent_covered_titles(settings)
 
-    analysis = analyze_transcripts(settings, payload, guidance=guidance)
+    analysis = analyze_transcripts(
+        settings,
+        payload,
+        guidance=guidance,
+        already_covered=already_covered,
+    )
     ideas = analysis.get("ideas", [])
     summary = analysis.get("summary", "Video topic ideas from recent meetings.")
 
@@ -98,6 +109,12 @@ def run_pipeline_for_transcripts(
 
     transcript_ids = [t.transcript_id for t in transcripts]
     run_id = save_analysis_run(settings, transcript_ids, analysis, telegram_sent)
+    save_covered_stories(
+        ideas,
+        transcript_ids,
+        analysis_run_id=run_id,
+        settings=settings,
+    )
 
     if mark_processed:
         mark_transcripts_processed(transcript_ids, settings, run_id)
@@ -176,6 +193,17 @@ def run_pipeline_for_latest_meeting(
 
 
 def load_latest_analysis() -> dict | None:
-    if not OUTPUT_PATH.exists():
-        return None
-    return json.loads(OUTPUT_PATH.read_text(encoding="utf-8"))
+    if OUTPUT_PATH.exists():
+        try:
+            return json.loads(OUTPUT_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    analysis = load_latest_analysis_from_db()
+    if analysis:
+        try:
+            OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+            OUTPUT_PATH.write_text(json.dumps(analysis, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+    return analysis

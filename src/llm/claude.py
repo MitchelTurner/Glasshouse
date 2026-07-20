@@ -50,9 +50,20 @@ Return ONLY compact valid JSON with at most 2 ideas per meeting.
 Keep every string under 120 characters. No markdown. No commentary."""
 
 
-def get_system_prompt(guidance: dict | None = None) -> str:
+def get_system_prompt(
+    guidance: dict | None = None,
+    already_covered: list[str] | None = None,
+) -> str:
     extra = build_guidance_prompt(guidance)
-    return f"{BASE_SYSTEM_PROMPT}\n\nProducer preferences:\n{extra}"
+    prompt = f"{BASE_SYSTEM_PROMPT}\n\nProducer preferences:\n{extra}"
+    if already_covered:
+        listed = "\n".join(f"- {title}" for title in already_covered[:40])
+        prompt += (
+            "\n\nAlready covered stories (do NOT propose near-duplicates; "
+            "find fresh angles or skip):\n"
+            f"{listed}"
+        )
+    return prompt
 
 
 def _format_http_error(provider: str, exc: httpx.HTTPStatusError) -> str:
@@ -84,9 +95,10 @@ def analyze_transcripts(
     settings: Settings,
     transcripts: list[dict],
     guidance: dict | None = None,
+    already_covered: list[str] | None = None,
 ) -> dict:
     user_content = _build_user_content(transcripts, settings.max_transcript_chars)
-    system_prompt = get_system_prompt(guidance)
+    system_prompt = get_system_prompt(guidance, already_covered=already_covered)
     errors: list[str] = []
 
     for provider in settings.llm_providers:

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from src.api.security import check_rate_limit, safe_error_detail, safe_status_error
 from src.config import Settings, get_settings
+from src.db.covered_stories import list_covered_stories
 from src.db.schema import load_schema
 from src.db.transcripts import fetch_recent_meeting_transcripts, get_connection
 from src.llm.claude import get_system_prompt
@@ -299,3 +300,24 @@ def latest_ideas():
     if not analysis:
         raise HTTPException(status_code=404, detail="No analysis results yet.")
     return analysis
+
+
+@router.get("/stories")
+def covered_stories(limit: int = 50, status: str | None = None):
+    """List covered news/video ideas persisted in Postgres for reuse by other software."""
+    settings = get_settings()
+    if limit < 1 or limit > 200:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 200.")
+    if status and status not in {"covered", "published", "archived"}:
+        raise HTTPException(
+            status_code=400,
+            detail="status must be one of: covered, published, archived.",
+        )
+    try:
+        stories = list_covered_stories(settings, limit=limit, status=status)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to load covered stories: {safe_error_detail(exc, settings)}",
+        ) from exc
+    return {"count": len(stories), "stories": stories}
