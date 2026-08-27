@@ -16,6 +16,7 @@ import psycopg2.extras
 
 from src.config import Settings, get_settings
 from src.db.connection import get_connection
+from src.novelty import normalize_tokens
 
 ENSURE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS covered_stories (
@@ -55,8 +56,10 @@ def _ensure_table(settings: Settings) -> None:
 
 
 def story_content_hash(idea: dict) -> str:
-    title = " ".join(str(idea.get("title") or "").lower().split())
-    meeting = " ".join(str(idea.get("meeting_source") or "").lower().split())
+    title_tokens = " ".join(sorted(normalize_tokens(idea.get("title") or "")))
+    meeting_tokens = " ".join(sorted(normalize_tokens(idea.get("meeting_source") or "")))
+    title = title_tokens or " ".join(str(idea.get("title") or "").lower().split())
+    meeting = meeting_tokens or " ".join(str(idea.get("meeting_source") or "").lower().split())
     payload = f"{title}|{meeting}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -253,6 +256,7 @@ def list_covered_stories(
     *,
     limit: int = 50,
     status: str | None = None,
+    lookback_days: int | None = None,
 ) -> list[dict]:
     settings = settings or get_settings()
     try:
@@ -281,9 +285,15 @@ def list_covered_stories(
         FROM covered_stories
     """
     params: list[Any] = []
+    where_parts: list[str] = []
     if status:
-        query += " WHERE status = %s"
+        where_parts.append("status = %s")
         params.append(status)
+    if lookback_days and lookback_days > 0:
+        where_parts.append("covered_at >= NOW() - (%s || ' days')::INTERVAL")
+        params.append(lookback_days)
+    if where_parts:
+        query += " WHERE " + " AND ".join(where_parts)
     query += " ORDER BY covered_at DESC LIMIT %s"
     params.append(limit)
 
@@ -301,13 +311,30 @@ def get_recent_covered_titles(
     limit: int = 40,
 ) -> list[str]:
     """Titles of recently covered stories for LLM dedup context."""
-    stories = list_covered_stories(settings, limit=limit)
+    stories = get_covered_story_context(settings, limit=limit)
     titles: list[str] = []
     for story in stories:
         title = str(story.get("title") or "").strip()
         if title and title not in titles:
             titles.append(title)
     return titles
+
+
+def get_covered_story_context(
+    settings: Settings | None = None,
+    *,
+    lookback_days: int | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    """Recently covered stories used for novelty filtering and LLM context."""
+    settings = settings or get_settings()
+    if lookback_days is None:
+        lookback_days = settings.covered_story_lookback_days
+    return list_covered_stories(
+        settings,
+        limit=limit,
+        lookback_days=lookback_days,
+    )
 
 
 def load_latest_analysis_from_db(settings: Settings | None = None) -> dict | None:

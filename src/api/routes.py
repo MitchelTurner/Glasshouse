@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from src.api.security import check_rate_limit, safe_error_detail, safe_status_error
@@ -51,6 +53,7 @@ class AnalyzeRequest(BaseModel):
     dry_run: bool = True
     send_telegram: bool = False
     guidance: GuidanceUpdate | None = None
+    scope: Literal["new_or_latest", "latest", "recent"] = "new_or_latest"
 
 
 class TelegramTestRequest(BaseModel):
@@ -233,6 +236,7 @@ def analyze(request: Request, payload: AnalyzeRequest):
             dry_run=payload.dry_run,
             send_telegram=payload.send_telegram,
             guidance=guidance,
+            scope=payload.scope,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -244,6 +248,8 @@ def analyze(request: Request, payload: AnalyzeRequest):
     return {
         "transcript_count": result.transcript_count,
         "idea_count": result.idea_count,
+        "skipped_duplicate_count": result.skipped_duplicate_count,
+        "scope": result.scope,
         "telegram_sent": result.telegram_sent,
         "run_id": result.run_id,
         "analysis": result.analysis,
@@ -279,7 +285,7 @@ def analyze_latest(request: Request, payload: AnalyzeRequest | None = None):
         result = run_pipeline_for_latest_meeting(
             settings,
             send_telegram=body.send_telegram,
-            mark_processed=False,
+            mark_processed=True,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -291,6 +297,8 @@ def analyze_latest(request: Request, payload: AnalyzeRequest | None = None):
     return {
         "transcript_count": result.transcript_count,
         "idea_count": result.idea_count,
+        "skipped_duplicate_count": result.skipped_duplicate_count,
+        "scope": result.scope,
         "telegram_sent": result.telegram_sent,
         "analysis": result.analysis,
         "telegram_preview": result.telegram_preview,

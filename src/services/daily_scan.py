@@ -32,15 +32,17 @@ def run_daily_scan(settings: Settings | None = None) -> dict:
         return {"ok": True, "new_meetings": 0, "message": "No new meetings found."}
 
     logger.info(
-        "Daily scan complete: %s new meeting(s), %s ideas, telegram_sent=%s",
+        "Daily scan complete: %s new meeting(s), %s ideas, %s repeats skipped, telegram_sent=%s",
         result.transcript_count,
         result.idea_count,
+        result.skipped_duplicate_count,
         result.telegram_sent,
     )
     return {
         "ok": True,
         "new_meetings": result.transcript_count,
         "idea_count": result.idea_count,
+        "skipped_duplicate_count": result.skipped_duplicate_count,
         "telegram_sent": result.telegram_sent,
         "run_id": result.run_id,
         "transcript_ids": result.transcript_ids,

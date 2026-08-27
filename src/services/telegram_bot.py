@@ -32,7 +32,7 @@ GENERATE_PATTERN = re.compile(
 HELP_TEXT = (
     "<b>Meeting Video Ideas Bot</b>\n\n"
     "<b>Commands</b>\n"
-    "/latest — analyze the latest meeting and send video ideas\n"
+    "/latest — analyze the latest meeting and send <b>new</b> video ideas\n"
     "/ideas — same as /latest\n"
     "/reset — clear conversation memory\n"
     "/status — check bot status\n"
@@ -124,7 +124,7 @@ def _handle_message(settings: Settings, message: dict) -> None:
         send_telegram_message(
             settings.telegram_bot_token,
             chat_id_str,
-            "<i>Analyzing the latest meeting transcript…</i>",
+            "<i>Analyzing the latest meeting for new video ideas…</i>",
         )
         try:
             result = run_pipeline_for_latest_meeting(settings, send_telegram=False)

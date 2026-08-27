@@ -12,7 +12,7 @@
       <div>
         <p class="eyebrow">Local News Pipeline</p>
         <h1>Meeting Video Ideas</h1>
-        <p class="subtitle">Test Telegram, tune AI guidance, and preview generated topic ideas.</p>
+        <p class="subtitle">Test Telegram, tune AI guidance, and preview fresh topic ideas from the latest meetings.</p>
       </div>
       <button id="refresh-status" class="button secondary">Refresh status</button>
     </header>
@@ -102,9 +102,16 @@
         <div class="card-header">
           <div>
             <h2>Run analysis</h2>
-            <p>Generate new video ideas using the current guidance settings.</p>
+            <p>Generate new video ideas from the newest meetings. Already-covered stories are hidden.</p>
           </div>
         </div>
+
+        <fieldset class="scope-row">
+          <legend>Which meetings</legend>
+          <label><input type="radio" name="analyze-scope" value="new_or_latest" checked> New meetings, or latest if none</label>
+          <label><input type="radio" name="analyze-scope" value="latest"> Latest meetings only</label>
+          <label><input type="radio" name="analyze-scope" value="recent"> All meetings in lookback window</label>
+        </fieldset>
 
         <div class="checkbox-row">
           <label><input id="dry-run" type="checkbox" checked> Dry run (do not send Telegram)</label>

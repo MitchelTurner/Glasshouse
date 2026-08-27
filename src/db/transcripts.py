@@ -69,9 +69,41 @@ def fetch_unprocessed_meeting_transcripts(settings: Settings) -> list[MeetingTra
     ]
 
 
-def fetch_latest_meeting_transcript(settings: Settings) -> MeetingTranscript | None:
+def fetch_latest_meeting_transcripts(
+    settings: Settings,
+    *,
+    limit: int | None = None,
+) -> list[MeetingTranscript]:
+    """Newest meetings first, capped to `limit` (default: settings.max_latest_meetings)."""
     transcripts = fetch_recent_meeting_transcripts(settings)
+    cap = settings.max_latest_meetings if limit is None else max(1, int(limit))
+    return transcripts[:cap]
+
+
+def fetch_latest_meeting_transcript(settings: Settings) -> MeetingTranscript | None:
+    transcripts = fetch_latest_meeting_transcripts(settings, limit=1)
     return transcripts[0] if transcripts else None
+
+
+def select_transcripts_for_scope(
+    settings: Settings,
+    scope: str | None = None,
+) -> list[MeetingTranscript]:
+    """Pick meetings for an analysis run.
+
+    new_or_latest — unprocessed meetings if any, otherwise the newest few
+    latest        — newest meetings only
+    recent        — every meeting in the lookback window
+    """
+    resolved = (scope or settings.analyze_scope or "new_or_latest").strip().lower()
+    if resolved == "recent":
+        return fetch_recent_meeting_transcripts(settings)
+    if resolved == "latest":
+        return fetch_latest_meeting_transcripts(settings)
+    unprocessed = fetch_unprocessed_meeting_transcripts(settings)
+    if unprocessed:
+        return unprocessed
+    return fetch_latest_meeting_transcripts(settings)
 
 
 def save_analysis_run(

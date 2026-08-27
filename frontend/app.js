@@ -186,9 +186,27 @@ function fillGuidanceForm(guidance) {
   }
 }
 
+function getSelectedScope() {
+  const selected = document.querySelector('input[name="analyze-scope"]:checked');
+  return selected?.value || "new_or_latest";
+}
+
 function renderIdeas(analysis) {
   const ideas = analysis.ideas || [];
-  resultsSummary.textContent = analysis.summary || `Loaded ${ideas.length} ideas.`;
+  const skipped = analysis.skipped_duplicate_count || 0;
+  const base = analysis.summary || `Loaded ${ideas.length} ideas.`;
+  resultsSummary.textContent = skipped
+    ? `${base} Hidden ${skipped} already-covered idea(s).`
+    : base;
+  if (!ideas.length) {
+    ideasList.innerHTML = `
+      <article class="idea-card">
+        <h3>No new ideas from these meetings</h3>
+        <p>Repeat stories were filtered so the dashboard stays on the latest news. Run again after a new meeting is ingested, or choose a different meeting scope.</p>
+      </article>
+    `;
+    return;
+  }
   ideasList.innerHTML = ideas.map((idea) => {
     const urgency = (idea.urgency || "medium").toLowerCase();
     const points = (idea.key_points || []).map((point) => `<li>${escapeHtml(point)}</li>`).join("");
@@ -203,6 +221,7 @@ function renderIdeas(analysis) {
         <div class="idea-meta">
           <span class="pill ${urgency}">${urgency}</span>
           <span class="pill">${escapeHtml(idea.estimated_length || "medium")}</span>
+          ${idea.meeting_date ? `<span class="pill">${escapeHtml(String(idea.meeting_date).slice(0, 10))}</span>` : ""}
         </div>
         <h3>${escapeHtml(idea.title || "Untitled")}</h3>
         <p><strong>Source:</strong> ${escapeHtml(idea.meeting_source || "Unknown")}</p>
@@ -330,12 +349,15 @@ document.getElementById("run-analysis").addEventListener("click", async () => {
         dry_run: document.getElementById("dry-run").checked,
         send_telegram: document.getElementById("send-telegram").checked,
         guidance: getGuidanceFromForm(),
+        scope: getSelectedScope(),
       }),
     });
 
     renderIdeas(payload.analysis);
     telegramPreview.textContent = payload.telegram_preview || "";
-    analysisStatus.textContent = `Generated ${payload.idea_count} ideas from ${payload.transcript_count} transcript(s).`;
+    const skipped = payload.skipped_duplicate_count || 0;
+    const skipNote = skipped ? ` Hidden ${skipped} repeat(s).` : "";
+    analysisStatus.textContent = `Generated ${payload.idea_count} new idea(s) from ${payload.transcript_count} transcript(s).${skipNote}`;
     showToast(payload.telegram_sent ? "Analysis complete and sent to Telegram" : "Analysis complete");
     await loadStatus();
   } catch (error) {

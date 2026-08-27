@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     max_transcript_chars: int = 6000
     llm_max_tokens: int = 8192
     dry_run: bool = False
+    covered_story_lookback_days: int = 60
+    analyze_scope: str = "new_or_latest"
+    max_latest_meetings: int = 3
 
     daily_scan_enabled: bool = True
     daily_scan_hour: int = 8

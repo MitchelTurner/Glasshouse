@@ -81,13 +81,45 @@ def test_telegram_connection(bot_token: str, chat_id: str) -> dict:
     }
 
 
-def format_ideas_message(summary: str, ideas: list[dict]) -> str:
+def format_ideas_message(
+    summary: str,
+    ideas: list[dict],
+    *,
+    skipped_duplicate_count: int = 0,
+    meeting_titles: list[str] | None = None,
+) -> str:
+    if not ideas:
+        lines = [
+            "<b>No new video ideas</b>",
+            "",
+            "Already suggested stories from these meetings were skipped so you stay current.",
+        ]
+        if meeting_titles:
+            lines.append("")
+            lines.append("Meetings checked:")
+            for title in meeting_titles[:8]:
+                lines.append(f"  • {_escape(title)}")
+        if skipped_duplicate_count:
+            lines.append("")
+            lines.append(f"{skipped_duplicate_count} repeat idea(s) hidden.")
+        if summary:
+            lines.extend(["", f"<i>{_escape(summary)}</i>"])
+        return "\n".join(lines)
+
     lines = ["<b>Meeting Video Ideas</b>", "", f"<i>{_escape(summary)}</i>", ""]
+    if skipped_duplicate_count:
+        lines.append(f"<i>{skipped_duplicate_count} already-covered idea(s) hidden.</i>")
+        lines.append("")
 
     for index, idea in enumerate(ideas, start=1):
         urgency = idea.get("urgency", "medium").upper()
         lines.append(f"<b>{index}. {_escape(idea.get('title', 'Untitled'))}</b> [{urgency}]")
-        lines.append(f"Source: {_escape(idea.get('meeting_source', 'Unknown'))}")
+        source = _escape(idea.get("meeting_source", "Unknown"))
+        meeting_date = idea.get("meeting_date")
+        if meeting_date:
+            lines.append(f"Source: {source} ({_escape(str(meeting_date)[:10])})")
+        else:
+            lines.append(f"Source: {source}")
         lines.append(f"Hook: {_escape(idea.get('hook', ''))}")
         lines.append(f"Angle: {_escape(idea.get('angle', ''))}")
 

@@ -12,8 +12,10 @@ from collections import deque
 from threading import Lock
 
 from src.config import Settings, get_settings
+from src.db.covered_stories import get_covered_story_context
 from src.db.transcripts import fetch_latest_meeting_transcript, fetch_recent_meeting_transcripts
 from src.llm.chat import chat_completion
+from src.novelty import format_covered_prompt_lines
 from src.services.pipeline import load_latest_analysis
 from src.services.prompt_settings import build_guidance_prompt, load_guidance
 
@@ -22,7 +24,8 @@ AGENT_SYSTEM_PROMPT = """You are a local news AI research assistant helping a vi
 You have meeting transcripts and prior video-idea analysis in your context. Use them to:
 - Answer questions about what was discussed, decided, or debated
 - Explain budget impacts, controversial votes, and community concerns
-- Suggest video angles, hooks, and follow-up reporting leads
+- Suggest video angles, hooks, and follow-up reporting leads from the newest meetings
+- Do not re-suggest stories listed as already covered unless there is a new development
 - Summarize meetings in plain language for a local audience
 
 Rules:
@@ -65,6 +68,18 @@ def build_meeting_context(settings: Settings) -> str:
         sections.append(
             "LATEST VIDEO IDEAS ANALYSIS\n"
             + _truncate(json.dumps(analysis, indent=2), settings.agent_analysis_chars)
+        )
+
+    try:
+        covered = get_covered_story_context(settings)
+    except Exception:
+        covered = []
+    covered_lines = format_covered_prompt_lines(covered, limit=25)
+    if covered_lines:
+        sections.append(
+            "ALREADY COVERED STORIES (do not re-suggest these unless the latest "
+            "meeting added a new vote, number, speaker, or outcome)\n"
+            + "\n".join(f"- {line}" for line in covered_lines)
         )
 
     if not sections:

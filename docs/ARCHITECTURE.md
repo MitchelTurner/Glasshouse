@@ -19,7 +19,8 @@ This document explains what each part of Glasshouse does and how data flows thro
 ```
 PostgreSQL transcripts
     ↓  src/db/transcripts.py      — fetch meetings (schema-adaptive SQL)
-    ↓  src/db/covered_stories.py  — load recently covered titles (dedup context)
+    ↓  src/db/covered_stories.py  — load recently covered stories (dedup context)
+    ↓  src/novelty.py             — drop rephrased ideas and already-used articles
     ↓  src/services/pipeline.py   — orchestrate the run
     ↓  src/llm/claude.py          — send transcripts to Claude, get JSON ideas
     ↓  src/research/web_search.py — DuckDuckGo enrichment per idea
@@ -36,14 +37,19 @@ PostgreSQL transcripts
 **`src/db/transcripts.py`** — Fetches meeting transcripts:
 - `fetch_recent_meeting_transcripts()` — all meetings in lookback window
 - `fetch_unprocessed_meeting_transcripts()` — excludes IDs in `processed_transcripts`
+- `fetch_latest_meeting_transcripts()` — newest N meetings
+- `select_transcripts_for_scope()` — new/latest/recent meeting selection
 - `fetch_latest_meeting_transcript()` — most recent meeting only
 
 **`src/db/processed.py`** — Tracks which transcript IDs have been analyzed so the daily scan only processes **new** meetings.
 
 **`src/db/covered_stories.py`** — Persists each generated news/video idea (title, angle, research, etc.) into `covered_stories`. Used to tell the LLM what was already covered and to let other software query shared Postgres / `/api/stories`. Can backfill from historical `analysis_runs` via `backfill_covered_stories_from_analysis_runs()` / `POST /api/stories/backfill` / `run_backfill_stories.py`.
 
+**`src/novelty.py`** — Token-overlap matching for rephrased titles/hooks and URL normalization so already-suggested articles are not attached again.
+
 **`src/services/pipeline.py`** — Main orchestrator:
-- `run_pipeline_for_transcripts()` — analyze a specific list of meetings
+- `run_pipeline()` — new/unprocessed meetings, or the latest few if none
+- `run_pipeline_for_transcripts()` — analyze a specific list of meetings, then hard-filter repeats
 - `run_pipeline_for_new_meetings()` — daily scan path (unprocessed only)
 - `run_pipeline_for_latest_meeting()` — Telegram `/latest` command path
 
@@ -130,6 +136,7 @@ Provider priority for LLM calls: Anthropic → OpenRouter → OpenAI (first avai
 
 | I want to… | Start here |
 |------------|-----------|
+| Change how repeat ideas are detected | `src/novelty.py` |
 | Change the LLM prompt for video ideas | `src/llm/claude.py` → `BASE_SYSTEM_PROMPT` |
 | Change the Telegram agent personality | `src/services/meeting_agent.py` → `AGENT_SYSTEM_PROMPT` |
 | Add a new API endpoint | `src/api/routes.py` |

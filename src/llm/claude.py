@@ -40,6 +40,9 @@ Return ONLY valid JSON (no markdown fences) with this structure:
 
 Rules:
 - Produce 2-3 ideas per meeting (max 3).
+- Prefer the newest meetings and the newest developments in those meetings.
+- Never recycle a story that was already covered unless there is a concrete new development (vote, number, speaker, or outcome).
+- Research queries must target new reporting, not articles already cited.
 - Keep every string under 180 characters.
 - Escape double quotes inside strings.
 - Do not include trailing commas.
@@ -57,10 +60,12 @@ def get_system_prompt(
     extra = build_guidance_prompt(guidance)
     prompt = f"{BASE_SYSTEM_PROMPT}\n\nProducer preferences:\n{extra}"
     if already_covered:
-        listed = "\n".join(f"- {title}" for title in already_covered[:40])
+        listed = "\n".join(f"- {title}" for title in already_covered[:60])
         prompt += (
-            "\n\nAlready covered stories (do NOT propose near-duplicates; "
-            "find fresh angles or skip):\n"
+            "\n\nAlready covered stories and rejected repeats. "
+            "Do NOT propose near-duplicates or the same article again. "
+            "Only keep a familiar topic if the latest meeting added a new vote, "
+            "figure, speaker, or outcome. Otherwise skip it and find something newer:\n"
             f"{listed}"
         )
     return prompt

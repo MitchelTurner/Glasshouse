@@ -109,8 +109,10 @@ The dashboard starts the daily scheduler and Telegram bot automatically.
 ### 5. Or run the CLI pipeline once
 
 ```bash
-python run_pipeline.py          # analyze + send Telegram
-python run_pipeline.py --dry-run  # preview only, no Telegram
+python run_pipeline.py             # new/latest meetings + send Telegram
+python run_pipeline.py --dry-run   # preview only, no Telegram
+python run_pipeline.py --latest    # newest meetings only
+python run_pipeline.py --all-recent  # every meeting in LOOKBACK_DAYS
 ```
 
 ---
@@ -148,6 +150,9 @@ python run_pipeline.py --dry-run  # preview only, no Telegram
 | `MAX_TRANSCRIPT_CHARS` | `6000` | Characters sent to LLM per transcript |
 | `LLM_MAX_TOKENS` | `8192` | Max tokens in LLM response |
 | `MAX_RESEARCH_QUERIES` | `3` | Web searches per idea |
+| `COVERED_STORY_LOOKBACK_DAYS` | `60` | Stories in this window are treated as already covered |
+| `ANALYZE_SCOPE` | `new_or_latest` | `new_or_latest`, `latest`, or `recent` |
+| `MAX_LATEST_MEETINGS` | `3` | Newest meetings used when nothing is unprocessed |
 
 ### Automation
 
@@ -182,7 +187,7 @@ Message your bot from the configured `TELEGRAM_CHAT_ID`.
 
 | Command | What it does |
 |---------|--------------|
-| `/latest` `/ideas` | Full structured video-ideas analysis for the latest meeting |
+| `/latest` `/ideas` | New video ideas from the latest meeting (repeats hidden) |
 | `/reset` | Clear conversation memory |
 | `/help` | Show available commands |
 | `/status` | Confirm the bot is running |
@@ -223,7 +228,7 @@ curl -X POST http://localhost:8080/api/scan/daily
 | `/api/status` | GET | Database, LLM, Telegram, automation status |
 | `/api/guidance` | GET/PUT | Read or save AI producer guidance |
 | `/api/telegram/test` | POST | Send a Telegram test message |
-| `/api/analyze` | POST | Run analysis from the dashboard |
+| `/api/analyze` | POST | Run analysis (`scope`: `new_or_latest`, `latest`, or `recent`) |
 | `/api/analyze/latest` | POST | Analyze only the latest meeting |
 | `/api/scan/daily` | POST | Trigger daily new-meeting scan |
 | `/api/ideas/latest` | GET | Return last analysis JSON (file, then Postgres fallback) |
@@ -236,7 +241,7 @@ curl -X POST http://localhost:8080/api/scan/daily
 
 Glasshouse adapts to different Postgres schemas automatically. It expects a `transcripts` table and optionally a `videos` table.
 
-After each analysis run, story ideas are written back to Postgres in `covered_stories` (and the full run in `analysis_runs`). That lets Glasshouse avoid re-covering the same topics and lets other software reuse the same data via SQL or `GET /api/stories`.
+After each analysis run, story ideas are written back to Postgres in `covered_stories` (and the full run in `analysis_runs`). Glasshouse uses those rows in two ways: the LLM is told what was already covered, then any near-duplicate titles, hooks, or research links are filtered out before results are shown or sent. Dashboard and CLI analysis default to **new meetings**, or the latest few if everything in the lookback window was already processed.
 
 ### Core tables
 
@@ -332,9 +337,11 @@ Glasshouse/
 ├── docs/
 │   └── ARCHITECTURE.md    # Code map and data flow
 ├── frontend/              # Dashboard HTML/CSS/JS
+├── tests/                 # Novelty, research, and pipeline unit tests
 └── src/
     ├── api/               # FastAPI app and REST routes
     ├── config.py          # Environment settings
+    ├── novelty.py         # Repeat idea / article filtering
     ├── db/                # Postgres queries and schema detection
     ├── llm/               # Claude analysis, chat, JSON parsing
     ├── notifications/     # Telegram send/format helpers
@@ -354,6 +361,7 @@ Glasshouse/
 | `Unterminated string` JSON error | Response too long | Lower `MAX_TRANSCRIPTS` or `MAX_TRANSCRIPT_CHARS` |
 | Guidance not saving on Railway | File storage is ephemeral | Uses Postgres `app_settings` — ensure DB is connected |
 | Telegram bot not responding | Polling disabled or wrong chat ID | Set `TELEGRAM_POLLING_ENABLED=true` and verify `TELEGRAM_CHAT_ID` |
+| Same ideas every week | Old meetings re-analyzed or weak title-only dedup | Defaults now use new/latest meetings and hide near-duplicates. Use `scope=recent` only when you want a full lookback rerun. |
 
 ---
 
